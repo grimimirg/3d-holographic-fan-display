@@ -49,63 +49,38 @@ void loop() {
 /* --------------------------------
    FUNCTIONS
    -------------------------------- */
-void setupAccessPoint() {
-  Serial.println("Starting Access Point...");
-  if (!WiFi.softAP("Holographic Engine (AccessPoint)", "")) {
-    Serial.println("AP creation failed!");
-    while (true) delay(1000);
-  }
-  Serial.print("AP ready, IP: ");
-  Serial.println(WiFi.softAPIP());
-}
-
-void setupHttpServer() {
-  server.on("/uploadImage", HTTP_POST, handleUploadImage);
-  server.onNotFound([]() {
-    server.send((int)HttpStatus::NOT_FOUND, contentType, "{\"error\":\"Route not found\"}");
-  });
-  server.begin();
-}
-
 void handleUploadImage() {
-  if (!server.hasArg("plain")) {
-    server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"Missing JSON body\"}");
-    return;
-  }
+  if (!checkBodyJSON()) return;
 
   StaticJsonDocument<20*1024> doc;
-  auto err = deserializeJson(doc, server.arg("plain"));
-  if (err) {
-    server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"JSON parse error\"}");
-    return;
-  }
+  if (!getBitmapJSON(doc)) return;
 
   int width  = doc["width"];
   int height = doc["height"];
-  if (width <= 0 || width > MAX_WIDTH ||
-      height <= 0 || height > MAX_HEIGHT) {
-    server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"Invalid dimensions\"}");
-    return;
-  }
+  checkWidthAndHeight(width, height);
 
   JsonArray rows = doc["pixels"];
-  if ((int)rows.size() != height) {
-    server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"Wrong number of rows\"}");
-    return;
-  }
+  checkNumberOfImageRows(rows, height);
 
-  for (int y = 0; y < height; y++) {
-    JsonArray cols = rows[y].as<JsonArray>();
+  // --------------------------------
+  /*
+  * conversion from 0/1 map to 0/1 byte map.
+  */
 
+  for (int i = 0; i < height; i++) {
+    JsonArray cols = rows[i].as<JsonArray>();
     if ((int)cols.size() != width) {
       server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"Wrong number of columns in row\"}");
       return;
     }
 
-    for (int x = 0; x < width; x++) {
-      bitmap[y][x] = cols[x] ? 1 : 0;
+    // Builds a "ON / OFF" pixel map
+    for (int j = 0; j < width; j++) {
+      bitmap[i][j] = cols[j] ? 1 : 0;
     }
   }
+
+  // --------------------------------
 
   float cx = width  / 2.0f;
   float cy = height / 2.0f;
@@ -155,5 +130,58 @@ void convertPixelImageToLedMap(const uint8_t *pixels, uint8_t *leds, int numPixe
     }
 
     leds[block] = anyOn ? 1 : 0;
+  }
+}
+
+/* Utilities */
+void setupAccessPoint() {
+  Serial.println("Starting Access Point...");
+  if (!WiFi.softAP("Holographic Engine (AccessPoint)", "")) {
+    Serial.println("AP creation failed!");
+    while (true) delay(1000);
+  }
+  Serial.print("AP ready, IP: ");
+  Serial.println(WiFi.softAPIP());
+}
+
+void setupHttpServer() {
+  server.on("/uploadImage", HTTP_POST, handleUploadImage);
+  server.onNotFound([]() {
+    server.send((int)HttpStatus::NOT_FOUND, contentType, "{\"error\":\"Route not found\"}");
+  });
+  server.begin();
+}
+
+bool checkBodyJSON() {
+  if (!server.hasArg("plain")) {
+    server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"Missing JSON body\"}");
+    return false;
+  }
+  
+  return true;
+}
+
+bool getBitmapJSON(StaticJsonDocument<20*1024> &doc) {
+  auto err = deserializeJson(doc, server.arg("plain"));
+  if (err) {
+    server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"JSON parse error\"}");
+    return false;
+  }
+
+  return true;
+}
+
+void checkWidthAndHeight(int width, int height) {
+  if (width <= 0 || width > MAX_WIDTH ||
+      height <= 0 || height > MAX_HEIGHT) {
+    server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"Invalid dimensions\"}");
+    return;
+  }
+}
+
+void checkNumberOfImageRows(JsonArray rows, int height) {
+  if ((int)rows.size() != height) {
+    server.send((int)HttpStatus::BAD_REQUEST, contentType, "{\"error\":\"Wrong number of rows\"}");
+    return;
   }
 }
